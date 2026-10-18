@@ -1,0 +1,20 @@
+# ===== 敏感/生成的文件,不要提交到 git =====
+
+# 虚拟环境(太大,能重建)
+.venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 数据库(含聊天记录,敏感!)
+memory.db
+
+# 环境变量(含 API key,敏感!)
+.env
+
+# 密钥文件(含 API key,敏感!)
+secrets.json
+
+# 日志
+*.log
