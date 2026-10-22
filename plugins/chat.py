@@ -4,6 +4,8 @@ AI 聊天插件
 功能:
   - 只回复 @机器人 的消息(群聊);私聊正常回复
   - 带长期记忆:对话存进 SQLite,重启后还记得
+  - 工具调用:时间/天气/搜索
+  - 识图:发送图片能识别
 
 数据流:
   QQ 消息 → 读历史 → 调 DeepSeek → 存历史 → 回复
@@ -11,6 +13,7 @@ AI 聊天插件
 
 import os
 import json
+import base64
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -185,7 +188,16 @@ async def tavily_search(query: str, max_results: int = 5) -> str:
     except Exception as e:
         return f"搜索出错: {e}"
 
-
+async def download_image(url: str) -> tuple[str, str]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        content_type = resp.headers.get("content-type", "image/jpeg")
+        mime = content_type.split(";")[0].strip()
+        if not mime.startswith("image/"):
+            mime = "image/jpeg"
+        b64 = base64.b64encode(resp.content).decode()
+        return b64, mime
 async def execute_tool(name: str, args: dict) -> str:
     
     if name == "get_current_time":
@@ -259,15 +271,26 @@ chat = on_message(
 
 
 # ── 调大模型的函数(人家给你写好了,参考你的 chat.py)──
-async def ask(question: str, session: str) -> str:
+async def ask(question: str, session: str, image_b64: str | None = None, image_mime: str = "image/jpeg") -> str:
     """调大模型,带记忆"""
 
     history = load_history(session)
 
+    if image_b64:
+        content = [
+            {"type": "text", "text": question or "描述这张图片"},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}
+            },
+        ]
+    else:
+        content = question
+
     messages = (
         [{"role": "system", "content": SYSTEM_PROMPT}]
         + history
-        + [{"role": "user", "content": question}]
+        + [{"role": "user", "content": content}]
     )
 
     answer = ""
@@ -328,13 +351,27 @@ async def ask(question: str, session: str) -> str:
 async def handle_chat(bot: Bot, event: Event):
     msg = event.get_plaintext().strip()
 
-    if not msg:
+    image_b64 = None
+    image_mime = "image/jpeg"
+
+    for seg in event.get_message():
+        if seg.type == "image":
+            url = seg.data.get("url") or ""
+            if url.startswith("http"):
+                try:
+                    image_b64, image_mime = await download_image(url)
+                except Exception as e:
+                    await chat.finish(f"图片下载失败: {e}")
+            break
+
+
+    if not msg and not image_b64:
         return
 
     session = event.get_session_id()
 
     try:
-        answer = await ask(msg, session)
+        answer = await ask(msg, session, image_b64, image_mime)
     except Exception as e:
         answer = f"出错啦: {e}"
 
